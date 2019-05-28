@@ -15,7 +15,9 @@ PAD_ID = 0
 UNK_ID = 1
 GO_ID = 2
 EOS_ID = 3
+# '_PAD'-补齐句子用；'_UNK'-未知词, '_GO', '_EOS'-结束标志, '_NAF_H', '_NAF_R', '_NAF_T'-未知三元组关系
 _START_VOCAB = ['_PAD', '_UNK', '_GO', '_EOS', '_NAF_H', '_NAF_R', '_NAF_T']
+
 
 class IEMSAModel(object):
     def __init__(self,
@@ -63,6 +65,7 @@ class IEMSAModel(object):
             self.symbols = tf.Variable(vocab, trainable=False, name="symbols")
         else:
             self.symbols = tf.Variable(np.array(['.']*num_symbols), name="symbols")
+
         self.symbol2index = HashTable(KeyValueTensorInitializer(self.symbols, 
             tf.Variable(np.array([i for i in range(num_symbols)], dtype=np.int32), False)), 
             default_value=UNK_ID, name="symbol2index")

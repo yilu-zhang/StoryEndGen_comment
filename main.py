@@ -24,8 +24,12 @@ tf.app.flags.DEFINE_string("inference_path", "", "Set filename of inference, def
 
 FLAGS = tf.app.flags.FLAGS
 
+# 需验证问题：line49，line79，line151，195
+
+# 加载前四句和结尾，共5句
 def load_data(path, fname):    
     post = []
+    # 打开main.py所在文件夹中data/train.post文件，注意格式
     with open('%s/%s.post' % (path, fname)) as f:
         for line in f:
             tmp = line.strip().split("\t")
@@ -37,7 +41,13 @@ def load_data(path, fname):
     for p, r in zip(post, response):
         data.append({'post': p, 'response': r})
     return data
+# [{'post': [["Dan's", 'parents', 'were', 'overweight', '.'], ['Dan', 'was', 'overweight', 'as', 'well', '.'], ['The',
+# 'doctors', 'told', 'his', 'parents', 'it', 'was', 'unhealthy', '.'], ['His', 'parents', 'understood', 'and', 'decided',
+#  'to', 'make', 'a', 'change', '.']],
+#  'response': ['They', 'got', 'themselves', 'and', 'Dan', 'on', 'a', 'diet', '.']}]
 
+
+# 加载三元组关系，去掉tail不包含在故事的关系，head全部保留，head也可以像tail一样操作？，relation为词典，见line61
 def load_relation(path):  
     file = open('%s/triples_shrink.txt' % (path), "r")
     
@@ -49,14 +59,25 @@ def load_relation(path):
                 relation[tmp[0]].append(tmp)
         else:
             relation[tmp[0]] = [tmp]
+# 这里有个缺陷就是两个相同实体之间只能有一种关系
+# {'i': [['i', '/r/HasContext', 'grammar'], ['i', '/r/IsA', 'letter'], ['i', '/r/RelatedTo', 'almost'],
+#  ['i', '/r/RelatedTo', 'alphabet']],
+#  'hi': [['hi', '/r/RelatedTo', 'friendly'], ['hi', '/r/RelatedTo', 'high'],
+#  ['hi', '/r/RelatedTo', 'lo'], ['hi', '/r/RelatedTo', 'mid'], ['hi', '/r/RelatedTo', 'hit']]}
 
+    #
     for r in relation.keys():
         tmp_vocab = {}
         i = 0
+
+        # 统计各关系中tail在故事中出现的频率，re相同h下不同三元组关系，tmp_vocab的key值为三元组关系索引
         for re in relation[r]:
             if re[2] in vocab_dict.keys():
                 tmp_vocab[i] = vocab_dict[re[2]]
             i += 1
+
+        # temp_list就是在故事中出现的三元组关系，并按顺序排列，关系数多于10条时，只取前10条
+        # 按次数顺序是不是不太妥？把高次数的丢了
         tmp_list = sorted(tmp_vocab, key=tmp_vocab.get)[:FLAGS.triple_num] if len(tmp_vocab) > FLAGS.triple_num else sorted(tmp_vocab, key=tmp_vocab.get)
         new_relation = []
         for i in tmp_list:
@@ -65,6 +86,11 @@ def load_relation(path):
 
     return relation
 
+
+# 程序会先运行这个函数，放在上一函数前更好
+# vocab_list-标记词+关系词+故事词汇（按次数逆序），string list
+# embed-np.array,依次对应vocab_list
+# vocab-dictionary，故事中各个词出现的次数
 def build_vocab(path, data):
     print("Creating vocabulary...")
  
@@ -72,18 +98,37 @@ def build_vocab(path, data):
     relation_file = open(path + "/relations.txt", "r")
     for line in relation_file:
         relation_vocab_list += line.strip().split()
-   
+   # ['/r/HasContext', '/r/IsA', '/r/RelatedTo', '/r/Synonym', '/r/Antonym']
+
     vocab = {}
     for i, pair in enumerate(data):
         if i % 100000 == 0:
             print("    processing line %d" % i)
+
+        # 统计词出现的次数
         for token in [word for p in pair['post'] for word in p]+pair['response']:
             if token in vocab:
                 vocab[token] += 1
             else:
                 vocab[token] = 1
+    # key是排序的依据，coab.get返回词频，将词按词频逆序排列
     vocab_list = _START_VOCAB + relation_vocab_list + sorted(vocab, key=vocab.get, reverse=True)
+    #i，pair
+    # 1
+    # {'post': [['Carrie', 'had', 'just', 'learned', 'how', 'to', 'ride', 'a', 'bike', '.'],
+    #           ['She', "didn't", 'have', 'a', 'bike', 'of', 'her', 'own', '.'],
+    #           ['Carrie', 'would', 'sneak', 'rides', 'on', 'her', "sister's", 'bike', '.'],
+    #           ['She', 'got', 'nervous', 'on', 'a', 'hill', 'and', 'crashed', 'into', 'a', 'wall', '.']],
+    #  'response': ['The', 'bike', 'frame', 'bent', 'and', 'Carrie', 'got', 'a', 'deep', 'gash', 'on', 'her', 'leg', '.']}
+    # 2
+    # {'post': [['Morgan', 'enjoyed', 'long', 'walks', 'on', 'the', 'beach', '.'],
+    #           ['She', 'and', 'her', 'boyfriend', 'decided', 'to', 'go', 'for', 'a', 'long', 'walk', '.'],
+    #           ['After', 'walking', 'for', 'over', 'a', 'mile', ',', 'something', 'happened', '.'],
+    #           ['Morgan', 'decided', 'to', 'propose', 'to', 'her', 'boyfriend', '.']],
+    #  'response': ['Her', 'boyfriend', 'was', 'upset', 'he', "didn't", 'propose', 'to', 'her', 'first', '.']}
 
+
+    # 为什么词汇量不能太大？10000
     if len(vocab_list) > FLAGS.symbols:
         vocab_list = vocab_list[:FLAGS.symbols]
 
@@ -93,23 +138,29 @@ def build_vocab(path, data):
         for i, line in enumerate(f):
             if i % 100000 == 0:
                 print("    processing line %d" % i)
-            s = line.strip()
-            word = s[:s.find(' ')]
+
+            # [‘the -0.071549 0.093459 0.023738 -0.090339 0.056123 0.32547 -0.39796 -0.092139 0.061181’]
+            s = line.strip()  # s is string
+            word = s[:s.find(' ')]  # s.find(' ')=3
             vector = s[s.find(' ')+1:]
             vectors[word] = vector
 
     embed = []
     for word in vocab_list:
         if word in vectors:
-            vector = map(float,  vectors[word].split())
+            vector = map(float,  vectors[word].split())  # vector is list，[-0.071549, 0.093459, 0.023738, -0.090339, 0.056123]
         else:
-            vector = np.zeros((FLAGS.embed_units), dtype=np.float32)
+            vector = np.zeros((FLAGS.embed_units), dtype=np.float32)  # 词典中没有的设为0向量，打印没有的词的个数
         embed.append(vector)
     embed = np.array(embed, dtype=np.float32)
     return vocab_list, embed, vocab
 
+
+# 返回处理后的参数batched_data，各参数已填充对齐
 def gen_batched_data(data):
-    encoder_len = [max([len(item['post'][i]) for item in data]) + 1 for i in range(4)]
+    # 读取故事和结尾最长的句子的长度，并+1在编码和解码时用，+1有什么用呢？结束标志
+    # item是一个故事和结尾
+    encoder_len = [max([len(item['post'][i]) for item in data]) + 1 for i in range(4)]  # 包含4个元素，分别是整个batch4句中最长的
     decoder_len = max([len(item['response']) for item in data]) + 1    
     posts_1, posts_2, posts_3, posts_4, posts_length_1, posts_length_2, posts_length_3, posts_length_4, responses, responses_length = [], [], [], [], [], [], [], [], [], []
 
@@ -117,11 +168,13 @@ def gen_batched_data(data):
         return sent + ['_EOS'] + ['_PAD'] * (l-len(sent)-1)
             
     for item in data:
+        # 使各句长度一致
         posts_1.append(padding(item['post'][0], encoder_len[0]))
         posts_2.append(padding(item['post'][1], encoder_len[1]))
         posts_3.append(padding(item['post'][2], encoder_len[2]))
         posts_4.append(padding(item['post'][3], encoder_len[3]))
 
+        # 带结束符的句子实际长度
         posts_length_1.append(len(item['post'][0]) + 1)
         posts_length_2.append(len(item['post'][1]) + 1)
         posts_length_3.append(len(item['post'][2]) + 1)
@@ -130,21 +183,24 @@ def gen_batched_data(data):
         responses.append(padding(item['response'], decoder_len))
         responses_length.append(len(item['response']) + 1)
 
+    # 每句话的
     entity = [[], [], [], []]
     for item in data:
         for i in range(4):
             entity[i].append([])
             for word in item['post'][i]:
                 try:
-                    w = lemma(word).encode("ascii")
+                    w = lemma(word).encode("ascii")  # ？
                 except UnicodeDecodeError, e:
                     w = word
+                # 只会检测head？把与之相关的关系都展开
                 if w in relation:
                     entity[i][-1].append(relation[w])
                 else:
                     entity[i][-1].append([['_NAF_H', '_NAF_R', '_NAF_T']])
-    max_response_length = [0,0,0,0]
-    max_triple_length = [0,0,0,0]
+
+    max_response_length = [0,0,0,0]  # 最大回答的长度由batch中最长句子决定
+    max_triple_length = [0,0,0,0]  #最长三元组关系数
     for i in range(4):
         for item in entity[i]:
             if len(item) > max_response_length[i]:
@@ -152,6 +208,8 @@ def gen_batched_data(data):
             for triple in item:
                 if len(triple) > max_triple_length[i]:
                     max_triple_length[i] = len(triple)
+
+    # 将各参数对齐，entity[i][j][k]：i-第i句；j-第j个故事；k-第k个词对应的几种三元组关系
     for i in range(4):
         for j in range(len(entity[i])):
             for k in range(len(entity[i][j])):
@@ -159,7 +217,8 @@ def gen_batched_data(data):
                     entity[i][j][k] = entity[i][j][k] + [['_NAF_H', '_NAF_R', '_NAF_T']] * (max_triple_length[i] - len(entity[i][j][k]))
             if len(entity[i][j]) < max_response_length:
                 entity[i][j] = entity[i][j] + [[['_NAF_H', '_NAF_R', '_NAF_T']] * max_triple_length[i]] * (max_response_length[i] - len(entity[i][j]))
-    
+
+    # 加掩膜，类似图像处理，乘以0,1
     entity_0, entity_1, entity_2, entity_3 = entity[0], entity[1], entity[2], entity[3]
     entity_mask = [[], [], [], []]
     for i in range(4):
@@ -195,6 +254,7 @@ def gen_batched_data(data):
                     'responses_length': responses_length}
     return batched_data
 
+
 def train(model, sess, dataset):
     st, ed, loss = 0, 0, []
     while ed < len(dataset):
@@ -209,6 +269,7 @@ def train(model, sess, dataset):
     return np.mean(loss) 
 
 def evaluate(model, sess, dataset):
+    # st是前一个训练到的故事，ed为当前训练到的故事
     st, ed, loss = 0, 0, []
     while ed < len(dataset):
         print "epoch %d, evaluate %.4f %%...\r" % (epoch, float(ed) / len(dataset) * 100),
@@ -218,6 +279,7 @@ def evaluate(model, sess, dataset):
         outputs = model.step_decoder(sess, batch_data, forward_only=True)
         loss.append(outputs[0])
     return np.mean(loss)
+
 
 def inference(model, sess, dataset):
     st, ed, posts, truth, generations, alignments_2, alignments_3, alignments_4, alignments = 0, 0, [], [], [], [], [], [], []
@@ -264,6 +326,10 @@ def inference(model, sess, dataset):
             print >> output_file, ' '.join(result)
     return 
 
+
+# 使用命令行的形式运行，相当于逐条运行，这里相当于主函数
+# 使用allow_growth option，刚一开始分配少量的GPU容量，然后按需慢慢的增加，由于不会释放
+# 内存，所以会导致碎片,https://blog.csdn.net/c20081052/article/details/82345454
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
 with tf.Session(config=config) as sess:
@@ -285,7 +351,8 @@ with tf.Session(config=config) as sess:
 
         if FLAGS.log_parameters:
             model.print_parameters()
-        
+
+        # 有数据就读没有的话
         if tf.train.get_checkpoint_state(FLAGS.train_dir):
             print("Reading model parameters from %s" % FLAGS.train_dir)
             model.saver.restore(sess, tf.train.latest_checkpoint(FLAGS.train_dir))
@@ -325,6 +392,7 @@ with tf.Session(config=config) as sess:
         if FLAGS.log_parameters:
             model.print_parameters()
 
+        # 读取参数
         if FLAGS.inference_version == 0:
             model_path = tf.train.latest_checkpoint(FLAGS.train_dir)
         else:
